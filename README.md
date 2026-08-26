@@ -132,7 +132,7 @@ python3 cli/aegis.py status
 
 ## 🔌 OmniRoute Plugin Integration
 
-AegisRoute provides a native provider & router plugin for [OmniRoute](https://github.com/omniroute/omniroute).
+AegisRoute provides a native provider & router plugin for [OmniRoute](https://github.com/0xVolta-max/omniroute)).
 
 Add the plugin to your OmniRoute configuration:
 
