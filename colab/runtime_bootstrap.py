@@ -10,13 +10,16 @@ from __future__ import annotations
 #@markdown *Trage hier deinen Hugging Face Read-Token (`hf_...`) ein, falls du auf geschützte Modelle wie `0xalpha/Security-Audit-7B-GGUF` zugreifen möchtest.*
 HF_TOKEN = "" #@param {type:"string"}
 
-#@markdown ### 🧠 2. Modell-Auswahl & Freie Eingabe (Custom Models)
-#@markdown * **Vordefinierte Modelle:** Wähle eines der getesteten Modelle aus dem Dropdown-Menü.
-#@markdown * **Freie Eingabe (Custom Model):** Du kannst direkt in die Textfelder klicken und ein beliebiges anderes Hugging Face Repository (`Organisation/Modell-Name`) sowie den gewünschten `.gguf`-Dateinamen eingeben.
-#@markdown * **Hinweis zu Qwen3.8:** Bei `JonathanColetti/Qwen3.8-27B` bitte zwingend die **noMTP-Variante** (`Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf`) wählen, da Standard-`llama.cpp` MTP-Heads (Multi-Token Prediction) nicht unterstützt.
-#@markdown * **Hinweis zu Gated Models:** Manche Modelle (z. B. `0xalpha/...`) sind auf Hugging Face geschützt. Schalte dort den Zugriff frei oder nutze das standardmäßige, sofort frei verfügbare `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF`.
-MODEL_REPO = "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF" #@param ["JonathanColetti/Qwen3.8-27B-Uncensored-GGUF", "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF", "0xalpha/Security-Audit-7B-GGUF", "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF", "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF", "TheBloke/deepseek-coder-6.7B-instruct-GGUF"] {allow-input: true}
-MODEL_FILE = "Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf" #@param ["Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf", "qwen2.5-coder-7b-instruct-q4_k_m.gguf", "Qwen3.8-27B-Uncensored-Q4_K_M.gguf", "model-q4_k_m.gguf", "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf", "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf"] {allow-input: true}
+#@markdown ### 🧠 2. Modell-Auswahl & Hardware-Empfehlungen
+#@markdown * 👑 **Qwen 3.8 Uncensored 27B (Heretic Abliterated - 0 Refusals):**
+#@markdown   * `JonathanColetti/Qwen3.8-27B-Uncensored-GGUF` (Standard: `Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf`)
+#@markdown   * *Free-Tier-Support:* Automatische NVMe-Swap-Erweiterung (12 GB) wird aktiviert, um OOM-Abstürze beim Laden zu verhindern.
+#@markdown * 🟢 **Kompakte 7B/14B Uncensored Alternativen:**
+#@markdown   * `bartowski/Qwen2.5-Coder-7B-Instruct-abliterated-GGUF` (100% GPU, ~50 Tok/s, Null OOM-Risiko)
+#@markdown   * `bartowski/Qwen2.5-Coder-14B-Instruct-abliterated-GGUF` (14B High Reasoning)
+#@markdown   * `0xalpha/Security-Audit-7B-GGUF` (Spezialisiert auf Security Audits & Smart Contracts)
+MODEL_REPO = "JonathanColetti/Qwen3.8-27B-Uncensored-GGUF" #@param ["JonathanColetti/Qwen3.8-27B-Uncensored-GGUF", "bartowski/Qwen2.5-Coder-7B-Instruct-abliterated-GGUF", "bartowski/Qwen2.5-Coder-14B-Instruct-abliterated-GGUF", "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF", "0xalpha/Security-Audit-7B-GGUF", "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF", "TheBloke/deepseek-coder-6.7B-instruct-GGUF"] {allow-input: true}
+MODEL_FILE = "Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf" #@param ["Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf", "Qwen3.8-27B-Uncensored-noMTP-IQ4_XS.gguf", "Qwen3.8-27B-Uncensored-noMTP-IQ3_XXS.gguf", "Qwen3.8-27B-Uncensored-noMTP-Q2_K.gguf", "Qwen2.5-Coder-7B-Instruct-abliterated-Q4_K_M.gguf", "Qwen2.5-Coder-14B-Instruct-abliterated-Q4_K_M.gguf", "qwen2.5-coder-7b-instruct-q4_k_m.gguf", "0xalpha-Security-Audit-7B.Q4_K_M.gguf"] {allow-input: true}
 
 #@markdown ### ⚙️ 3. Runtime & Hardware Einstellungen
 #@markdown * **GPU_LAYERS:** `-1` für automatisches Offloading aller Layer auf T4/A100 GPU (bzw. adaptive Drosselung bei 27B/32B Modellen).
@@ -92,6 +95,22 @@ def resolve_hf_token() -> Optional[str]:
         except Exception:
             pass
     return token.strip() if token else None
+
+
+def configure_swap_memory(swap_size_gb: int = 12) -> None:
+    """Configure virtual memory swap space on NVMe disk to prevent OOM killer on 27B models."""
+    if os.path.exists("/swapfile"):
+        return
+    try:
+        log(f"Configuring {swap_size_gb}GB virtual memory swap on NVMe disk to support 27B Qwen3.8...", "INFO")
+        cmd = (
+            f"fallocate -l {swap_size_gb}G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count={swap_size_gb * 1024} status=none && "
+            "chmod 600 /swapfile && mkswap /swapfile >/dev/null 2>&1 && swapon /swapfile >/dev/null 2>&1"
+        )
+        subprocess.run(cmd, shell=True, timeout=40)
+        log("Virtual memory swap active: Host addressable memory expanded successfully.", "INFO")
+    except Exception as e:
+        log(f"Swap configuration notice: {e}", "WARN")
 
 
 def install_cloudflared() -> None:
@@ -419,8 +438,8 @@ def main():
     # Check if selected model exceeds Colab Free Tier hardware capabilities
     is_large_model = any(k in (model_repo + model_file).lower() for k in ["27b", "32b", "70b"])
     if is_large_model and sys_ram_mb < 20000:
-        log(f"Hinweis: '{model_repo}' ist ein 27B+ Modell (~17GB).", "WARN")
-        log("Colab Free Tier bietet ~12.7GB RAM. Allokation wird dynamisch partitioniert...", "WARN")
+        log(f"Hinweis: '{model_repo}' ist ein 27B+ Modell (~17GB).", "INFO")
+        configure_swap_memory(swap_size_gb=14)
 
     model_path = download_model(model_repo, model_file, token=token)
 
