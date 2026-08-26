@@ -230,11 +230,68 @@ def start_cloudflare_tunnel(port: int = 8000) -> Tuple[subprocess.Popen, str]:
     return proc, tunnel_url
 
 
+def wait_for_server_ready(port: int, proc: subprocess.Popen, timeout: int = 180) -> bool:
+    """Poll local llama_cpp server until /v1/models returns HTTP 200."""
+    import urllib.request
+    import json
+
+    log(f"Waiting up to {timeout}s for llama_cpp.server to become healthy on port {port}...")
+    start_t = time.time()
+    url = f"http://127.0.0.1:{port}/v1/models"
+
+    while time.time() - start_t < timeout:
+        # Check if server process terminated prematurely
+        ret = proc.poll()
+        if ret is not None:
+            log(f"llama_cpp.server process exited unexpectedly with return code {ret}!", "ERROR")
+            return False
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "AegisHealthCheck/1.0"})
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                if resp.status == 200:
+                    body = resp.read().decode("utf-8")
+                    data = json.loads(body)
+                    models = [m.get("id") for m in data.get("data", [])]
+                    log(f"Server is HEALTHY and listening on port {port}! Loaded models: {models}", "INFO")
+                    return True
+        except Exception:
+            pass
+
+        time.sleep(2)
+
+    log(f"Timeout ({timeout}s) exceeded while waiting for llama_cpp.server to respond!", "ERROR")
+    return False
+
+
+def verify_tunnel_connectivity(tunnel_url: str, timeout: int = 45) -> bool:
+    """Verify end-to-end Cloudflare tunnel ingress before broadcasting readiness."""
+    import urllib.request
+
+    log(f"Verifying end-to-end tunnel ingress at {tunnel_url}...")
+    start_t = time.time()
+    url = f"{tunnel_url.rstrip('/')}/v1/models"
+
+    while time.time() - start_t < timeout:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "AegisHealthCheck/1.0"})
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                if resp.status == 200:
+                    log("End-to-end Cloudflare tunnel ingress verified successfully (HTTP 200)!", "INFO")
+                    return True
+        except Exception as exc:
+            pass
+        time.sleep(3)
+
+    log("Tunnel verification warning: Upstream edge response pending.", "WARN")
+    return False
+
+
 def main():
     print("=" * 70)
     print(" 🛡️  AegisRoute Colab Autonomous LLM Inference Bridge")
     print("=" * 70)
-    
+
     has_gpu, gpu_status = get_gpu_info()
     log(f"Hardware Status: {gpu_status}")
 
@@ -264,11 +321,17 @@ def main():
 
     server_proc = start_llama_server(model_path, gpu_layers=effective_gpu_layers)
 
-    # Wait for llama_cpp server to bind port
-    time.sleep(5)
+    # Deterministic health check: Wait until local model server is healthy
+    if not wait_for_server_ready(PORT, server_proc, timeout=180):
+        log("Fatal error: llama_cpp.server failed to initialize. Aborting bootstrap.", "ERROR")
+        server_proc.terminate()
+        return
 
     tunnel_proc, raw_tunnel_url = start_cloudflare_tunnel(PORT)
     api_base_url = f"{raw_tunnel_url.rstrip('/')}/v1"
+
+    # Verify end-to-end tunnel ingress
+    verify_tunnel_connectivity(raw_tunnel_url)
 
     print("\n" + "=" * 70)
     print(f" [AEGIS_READY] BASE_URL={api_base_url}")
@@ -286,3 +349,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

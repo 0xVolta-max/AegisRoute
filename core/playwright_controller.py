@@ -287,18 +287,49 @@ class ColabPlaywrightController:
         try:
             # Check entire page body innerText for speed & coverage
             body_text = await page.evaluate("() => document.body ? document.body.innerText : ''")
+            candidate_url = None
+
             match = AEGIS_READY_REGEX.search(body_text)
             if match:
-                return match.group(1).rstrip("/")
+                candidate_url = match.group(1).rstrip("/")
+            else:
+                # Fallback check for Cloudflare quick tunnel URL
+                cf_match = CLOUDFLARE_URL_REGEX.search(body_text)
+                if cf_match:
+                    url = cf_match.group(0).rstrip("/")
+                    candidate_url = f"{url}/v1"
 
-            # Fallback check for Cloudflare quick tunnel URL
-            cf_match = CLOUDFLARE_URL_REGEX.search(body_text)
-            if cf_match:
-                url = cf_match.group(0).rstrip("/")
-                return f"{url}/v1"
+            if candidate_url:
+                # Validate that the endpoint is actually accepting HTTP traffic
+                is_valid = await self._probe_endpoint_health(candidate_url)
+                if is_valid:
+                    return candidate_url
+                else:
+                    logger.debug("Candidate endpoint %s detected but not yet answering with 200 OK. Waiting...", candidate_url)
         except Exception:
             pass
         return None
+
+    async def _probe_endpoint_health(self, base_url: str) -> bool:
+        """Asynchronously probe /models endpoint with short timeout."""
+        try:
+            if httpx:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    res = await client.get(f"{base_url.rstrip('/')}/models")
+                    return res.status_code == 200
+            else:
+                import urllib.request
+                loop = asyncio.get_event_loop()
+                def _sync_probe():
+                    try:
+                        req = urllib.request.Request(f"{base_url.rstrip('/')}/models")
+                        with urllib.request.urlopen(req, timeout=3.0) as r:
+                            return r.status == 200
+                    except Exception:
+                        return False
+                return await loop.run_in_executor(None, _sync_probe)
+        except Exception:
+            return False
 
     async def _notify_omniroute_tunnel_update(self, tunnel_url: str) -> None:
         """Call OmniRoute's plugin admin endpoint to update the tunnel URL live."""
