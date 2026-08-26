@@ -128,6 +128,7 @@ class AegisRoutePlugin {
       models: [
         { id: 'aegis-security', name: 'Aegis 0xalpha Security Audit 7B', contextWindow: 8192 },
         { id: 'aegis-coder', name: 'Aegis Qwen 2.5 Coder', contextWindow: 8192 },
+        { id: 'aegis-uncensored', name: 'Aegis Qwen 3.8 27B Uncensored', contextWindow: 8192 },
       ],
       isDynamic: true,
       status: this.state.status,
