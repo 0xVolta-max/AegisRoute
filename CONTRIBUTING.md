@@ -70,4 +70,4 @@ Before opening a Pull Request, make sure all test suites pass locally:
 
 ## 🔒 Security Vulnerabilities
 
-If you discover a security vulnerability within AegisRoute itself, please do not file a public issue. Send details to security@aegisroute.dev or open a Private Security Advisory on GitHub.
+If you discover a security vulnerability within AegisRoute itself, please do not file a public issue. Send details to security@safy.pro or open a Private Security Advisory on GitHub.
