@@ -141,10 +141,11 @@ def get_system_ram_mb() -> int:
 
 
 def install_dependencies(has_gpu: bool) -> None:
-    log("Installing Python server dependencies (pydantic-settings, fastapi, uvicorn, sse-starlette, jinja2)...")
+    log("Installing Python server dependencies (pydantic-settings, fastapi, uvicorn, sse-starlette, jinja2, cuda-runtime)...")
     run_command(
         "pip install -q --upgrade pip huggingface_hub jsonschema jinja2 "
-        "pydantic pydantic-settings fastapi uvicorn sse-starlette starlette starlette-context httpx"
+        "pydantic pydantic-settings fastapi uvicorn sse-starlette starlette starlette-context httpx "
+        "nvidia-cuda-runtime-cu12 nvidia-cublas-cu12"
     )
 
     if has_gpu:
@@ -163,8 +164,13 @@ def install_dependencies(has_gpu: bool) -> None:
         )
         run_command(install_cmd, env=cuda_env)
     else:
-        log("No GPU detected. Installing CPU-optimized llama-cpp-python...")
-        run_command("pip install -q llama-cpp-python[server]")
+        log("Installing llama-cpp-python...")
+        run_command(
+            "pip install -q llama-cpp-python[server] "
+            "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 "
+            "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu122 "
+            "|| pip install -q llama-cpp-python[server]"
+        )
 
 
 def download_model(repo_id: str, filename: str, token: Optional[str] = None) -> str:
@@ -254,6 +260,25 @@ def start_llama_server(
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+
+    # Dynamically inject CUDA and NVIDIA package shared library paths to prevent libcudart.so.12 errors
+    extra_ld_paths = [
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12/lib64",
+        "/usr/local/cuda/targets/x86_64-linux/lib",
+    ]
+    try:
+        import site
+        for sp in site.getsitepackages():
+            extra_ld_paths.append(os.path.join(sp, "nvidia", "cuda_runtime", "lib"))
+            extra_ld_paths.append(os.path.join(sp, "nvidia", "cublas", "lib"))
+    except Exception:
+        pass
+
+    valid_ld_paths = [p for p in extra_ld_paths if os.path.exists(p)]
+    current_ld = env.get("LD_LIBRARY_PATH", "")
+    if valid_ld_paths:
+        env["LD_LIBRARY_PATH"] = ":".join(valid_ld_paths) + (f":{current_ld}" if current_ld else "")
 
     proc = subprocess.Popen(
         cmd,
