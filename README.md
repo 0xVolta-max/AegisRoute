@@ -181,9 +181,12 @@ When a PR is opened, the specialized `0xalpha/Security-Audit-7B` model analyzes 
 
 ## 🧪 Testing Suite
 
-Validate tool-calling and failover mechanisms:
+Validate unit, integration, tool-calling, and failover mechanisms:
 
 ```bash
+# Run comprehensive Python unit and integration test suite
+python3 -m unittest tests/test_unit_and_integration.py
+
 # Test OpenAI-compatible function calling (tools schema)
 chmod +x tests/test_tool_calling.sh
 ./tests/test_tool_calling.sh
@@ -195,14 +198,15 @@ chmod +x tests/test_failover.sh
 
 ---
 
-## 🔧 Troubleshooting
+## 🔧 Troubleshooting & Diagnostic Matrix
 
-| Issue | Cause | Solution |
+| Symptom / Error | Root Cause | Automated Mitigation & Solution |
 | :--- | :--- | :--- |
-| **Exit Code 2 (Quota Exceeded)** | Google Colab free GPU compute units exhausted | Circuit-breaker automatically routes to fallback chain for 4 hours. No manual intervention required. |
-| **Login Redirect in Headless** | Google session cookie expired | Run `python3 cli/aegis.py init-auth` to re-login interactively. |
-| **Cloudflare Tunnel Delay** | Temporary latency in quick tunnel creation | Increase timeout via `python3 cli/aegis.py start --timeout 600`. |
-| **VRAM Out-of-Memory** | Loading large models (32B) on T4 GPU | Ensure `runtime_bootstrap.py` uses `--n_gpu_layers 26` to offload layers to CPU RAM. |
+| **HTTP 502 Bad Gateway** | Cloudflare tunnel initialized before `llama_cpp.server` finished loading weights | **Fixed in v1.1.0:** `wait_for_server_ready()` and `verify_tunnel_connectivity()` poll local port 8000 until `HTTP 200 OK` is verified before emitting `[AEGIS_READY]`. |
+| **Exit Code 2 (Quota Exceeded)** | Google Colab free GPU compute units exhausted | Circuit-breaker automatically routes to fallback chain (`local-mlx`, `anthropic`, `openai`) for 4 hours. No manual intervention required. |
+| **Login Redirect in Headless** | Google session cookie expired or uninitialized | Run `python3 cli/aegis.py init-auth` to re-authenticate interactively in visible Chromium. |
+| **Gated Model Access (401/403)** | Hugging Face token missing for gated repo (e.g. `0xalpha`) | Colab bootstrap triggers automatic fallback to public unrestricted model `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF`. |
+| **VRAM Out-of-Memory (OOM)** | Full offloading of large models (27B/32B) on 16GB T4 GPU | Dynamic layer calculation automatically limits GPU offload to 26 layers (`--n_gpu_layers 26`), utilizing Colab system RAM for remaining layers. |
 
 ---
 
