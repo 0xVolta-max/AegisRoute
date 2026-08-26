@@ -11,6 +11,11 @@
 │  └──────────▲───────────┘        └───────────▲───────────┘  │
 │             │                                │              │
 │    wait_for_server_ready()        verify_tunnel_connectivity()
+│             │                                │              │
+│    ┌────────┴──────────┐                     │              │
+│    │ NVMe Virtual Swap │ (14 GB Swap Space)  │              │
+│    │ 3-Stage Cascade   │ (Golden Fallback)   │              │
+│    └───────────────────┘                     │              │
 └─────────────┼────────────────────────────────┼──────────────┘
               │ [AEGIS_READY] Marker           │ HTTPS Ingress
 ┌─────────────┴───────────┐                    ▼
@@ -26,9 +31,11 @@
 
 ### 1. Colab Runtime Bootstrap (`colab/runtime_bootstrap.py`)
 - Downloads quantized GGUF models directly to ephemeral Colab storage.
-- Dynamically allocates GPU layers to avoid VRAM oversubscription.
-- Uses `llama-cpp-python[server]` with ChatML / OpenAI function calling schema support.
-- Employs a pre-flight probe (`wait_for_server_ready`) before Cloudflare Quick Tunnel exposure.
+- Automatically initializes a **14 GB NVMe Virtual Memory Swap** file on `/content` to prevent Host OOM kills on 27B/32B parameter models.
+- Features an autonomous **3-Stage Self-Healing Cascade** (Primary Configuration -> Conservative Mitigation -> Stage 3 Golden Fallback `Qwen2.5-Coder-7B`).
+- Dynamically allocates GPU layers (`compute_safe_gpu_layers`) based on active VRAM via `nvidia-smi`.
+- Uses `llama-cpp-python[server]` with ChatML / OpenAI function calling schema support and native embedded GGUF Jinja2 chat templates.
+- Employs unbuffered rolling logging (`SERVER_LOGS`) to capture instantaneous crash tracebacks.
 - Validates end-to-end edge ingress (`verify_tunnel_connectivity`) prior to printing `[AEGIS_READY]`.
 
 ### 2. Autonomous Headless Controller (`core/playwright_controller.py`)
@@ -41,7 +48,7 @@
 ### 3. OmniRoute Smart Router Plugin (`plugin/index.js`)
 - Dynamically registers the `colab-aegis` provider with OpenAI-compatible model catalog.
 - Evaluates inbound user prompt tokens against pre-compiled security keywords (`audit`, `reentrancy`, `cve`, etc.).
-- Directs matching requests to the specialized `0xalpha` security audit model.
+- Directs matching requests to the specialized `0xalpha` security audit model or `Qwen3.8-Uncensored`.
 - Automatically triggers failover to fallback chains (`local-mlx`, `anthropic`, `openai`) when Colab enters cooldown or becomes unreachable.
 - Exposes administrative hot-reload webhook (`POST /aegis/update-tunnel`).
 
@@ -49,3 +56,4 @@
 - Native macOS alerts via `osascript` with audio cues (`Glass` on recovery, `Basso` on quota failure).
 - Discord webhooks with color-coded rich embeds.
 - n8n workflow integration via webhook payloads.
+

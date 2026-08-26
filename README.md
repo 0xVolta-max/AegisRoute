@@ -202,11 +202,14 @@ chmod +x tests/test_failover.sh
 
 | Symptom / Error | Root Cause | Automated Mitigation & Solution |
 | :--- | :--- | :--- |
-| **HTTP 502 Bad Gateway** | Cloudflare tunnel initialized before `llama_cpp.server` finished loading weights | **Fixed in v1.1.0:** `wait_for_server_ready()` and `verify_tunnel_connectivity()` poll local port 8000 until `HTTP 200 OK` is verified before emitting `[AEGIS_READY]`. |
-| **Exit Code 2 (Quota Exceeded)** | Google Colab free GPU compute units exhausted | Circuit-breaker automatically routes to fallback chain (`local-mlx`, `anthropic`, `openai`) for 4 hours. No manual intervention required. |
+| **HTTP 502 Bad Gateway** | Cloudflare tunnel initialized before `llama_cpp.server` finished loading weights | `wait_for_server_ready()` and `verify_tunnel_connectivity()` poll local port 8000 until `HTTP 200 OK` is verified before emitting `[AEGIS_READY]`. |
+| **`libcudart.so.12: cannot open`** | CUDA shared libraries unlinked or Colab started in CPU-only mode | Bootstrap automatically installs `nvidia-cuda-runtime-cu12` and injects `/usr/local/cuda/lib64` into `LD_LIBRARY_PATH`. In Colab, switch runtime to **T4 GPU** (`Runtime -> Change runtime type`). |
+| **MTP Header Parse Error** | Qwen 3.8 GGUF contains Multi-Token Prediction layers unsupported by `llama.cpp` | Bootstrap automatically detects MTP builds and substitutes the **`noMTP`** variant (e.g. `Qwen3.8-27B-Uncensored-noMTP-IQ4_XS.gguf`). |
+| **Host System RAM OOM (137)** | 27B GGUF model (~15-17 GB) exceeds Colab Free-Tier physical RAM (12.7 GB) | Bootstrap dynamically provisions a **14 GB NVMe Virtual Memory Swap** file on `/content`, expanding addressable memory to >26 GB. |
+| **VRAM Out-of-Memory (OOM)** | Full offloading of large models (27B/32B) on 15 GB T4 GPU | `compute_safe_gpu_layers()` calculates safe layer offload (18 layers on T4), preserving 4 GB VRAM for KV-cache. |
+| **Exit Code 1 on Server Init** | Incompatible chat format or hyperparameter overallocation | **3-Stage Self-Healing Cascade** automatically degrades parameters (Stage 2) or loads Stage 3 Golden Fallback (`Qwen2.5-Coder-7B`). |
+| **Exit Code 2 (Quota Exceeded)** | Google Colab free GPU compute units exhausted | Circuit-breaker automatically routes to fallback chain (`local-mlx`, `anthropic`, `openai`) for 4 hours. |
 | **Login Redirect in Headless** | Google session cookie expired or uninitialized | Run `python3 cli/aegis.py init-auth` to re-authenticate interactively in visible Chromium. |
-| **Gated Model Access (401/403)** | Hugging Face token missing for gated repo (e.g. `0xalpha`) | Colab bootstrap triggers automatic fallback to public unrestricted model `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF`. |
-| **VRAM Out-of-Memory (OOM)** | Full offloading of large models (27B/32B) on 16GB T4 GPU | Dynamic layer calculation automatically limits GPU offload to 26 layers (`--n_gpu_layers 26`), utilizing Colab system RAM for remaining layers. |
 
 ---
 
