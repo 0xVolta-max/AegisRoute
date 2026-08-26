@@ -1,0 +1,77 @@
+# ==========================================================
+# AegisRoute Strix Security Audit Scanner Configuration
+# ==========================================================
+
+version: "1.0"
+
+scanner:
+  name: "aegisroute-strix-security"
+  description: "Automated autonomous smart contract and codebase vulnerability auditor"
+  target_paths:
+    - "contracts/**/*.sol"
+    - "src/**/*.py"
+    - "src/**/*.js"
+    - "src/**/*.ts"
+    - "core/**/*.py"
+  exclude_paths:
+    - "node_modules/**"
+    - ".venv/**"
+    - "tests/**"
+    - "dist/**"
+
+# LLM Inference Provider Configuration
+llm:
+  provider: "openai"
+  base_url: "${OPENAI_BASE_URL:-http://localhost:20128/v1}"
+  api_key: "${OPENAI_API_KEY:-aegis-internal}"
+  model: "aegis-security"
+  temperature: 0.1
+  max_tokens: 4096
+  top_p: 0.95
+  timeout_seconds: 120
+
+# Vulnerability rules and detection profiles
+rules:
+  smart_contracts:
+    - id: "SOL-001"
+      name: "Reentrancy Vulnerability"
+      severity: "CRITICAL"
+      category: "Reentrancy"
+    - id: "SOL-002"
+      name: "Access Control & Privilege Escalation"
+      severity: "CRITICAL"
+      category: "AccessControl"
+    - id: "SOL-003"
+      name: "Unchecked Return Values / Call Injection"
+      severity: "HIGH"
+      category: "ExternalCalls"
+    - id: "SOL-004"
+      name: "Oracle Manipulation & Flash Loan Exploits"
+      severity: "CRITICAL"
+      category: "DeFiLogic"
+    - id: "SOL-005"
+      name: "Integer Overflow / Precision Loss"
+      severity: "MEDIUM"
+      category: "Arithmetic"
+
+  web_and_backend:
+    - id: "SEC-001"
+      name: "Command / SQL Injection"
+      severity: "CRITICAL"
+      category: "Injection"
+    - id: "SEC-002"
+      name: "Authentication Bypass & Session Fixation"
+      severity: "CRITICAL"
+      category: "Auth"
+    - id: "SEC-003"
+      name: "Insecure Deserialization & Prototype Pollution"
+      severity: "HIGH"
+      category: "DataValidation"
+
+# Output configuration
+reporting:
+  format: "markdown"
+  output_file: "strix-audit-report.md"
+  summary_badge: true
+  include_remediation_code: true
+  min_severity_alert: "MEDIUM"

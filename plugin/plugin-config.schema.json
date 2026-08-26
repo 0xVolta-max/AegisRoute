@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AegisRoutePluginConfig",
+  "type": "object",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable or disable the AegisRoute Colab Bridge plugin"
+    },
+    "tunnelUrl": {
+      "type": "string",
+      "format": "uri",
+      "default": "http://localhost:8000/v1",
+      "description": "Active Cloudflare or local tunnel base URL (ending in /v1)"
+    },
+    "colabNotebookUrl": {
+      "type": "string",
+      "format": "uri",
+      "description": "Google Colab Notebook URL for auto-recovery"
+    },
+    "healthCheckIntervalSeconds": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 5,
+      "description": "Interval for active health checks against the /v1/models endpoint"
+    },
+    "cooldownHours": {
+      "type": "number",
+      "default": 4.0,
+      "description": "Circuit breaker cooldown in hours when Colab GPU quota is exhausted"
+    },
+    "fallbackChain": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": ["local-mlx", "anthropic", "openai"],
+      "description": "Ordered list of fallback provider IDs to route requests to during outages"
+    },
+    "securityKeywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "audit",
+        "vulnerability",
+        "reentrancy",
+        "exploit",
+        "smart contract",
+        "cve",
+        "overflow",
+        "injection",
+        "privilege escalation",
+        "bypass",
+        "malware",
+        "strix"
+      ],
+      "description": "Keywords that trigger routing to specialized 0xalpha security model"
+    },
+    "alertChannels": {
+      "type": "object",
+      "properties": {
+        "discordWebhookUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "n8nWebhookUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "enableMacosNotification": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "required": ["tunnelUrl"]
+}

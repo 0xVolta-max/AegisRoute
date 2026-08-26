@@ -1,0 +1,27 @@
+{
+  "name": "omniroute-plugin-aegis",
+  "version": "1.0.0",
+  "description": "Autonomous Google Colab LLM inference bridge & DevSecOps smart router plugin for OmniRoute",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": [
+    "omniroute",
+    "omniroute-plugin",
+    "colab",
+    "llm-inference",
+    "devsecops",
+    "security-audit",
+    "failover",
+    "circuit-breaker"
+  ],
+  "author": "AegisRoute Team",
+  "license": "MIT",
+  "omniroute": {
+    "pluginType": "provider-router",
+    "minVersion": "1.0.0",
+    "configSchema": "plugin-config.schema.json"
+  },
+  "dependencies": {}
+}
