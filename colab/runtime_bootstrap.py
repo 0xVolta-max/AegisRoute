@@ -9,6 +9,7 @@ It will:
 5. Launch llama_cpp.server with ChatML Function-Calling & OpenAI compatibility.
 6. Establish a Cloudflare tunnel and output the [AEGIS_READY] BASE_URL marker.
 """
+from __future__ import annotations
 
 import os
 import re
@@ -17,7 +18,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 # ==========================================
 # CONFIGURATION & HYPERPARAMETERS
