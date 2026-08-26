@@ -115,7 +115,7 @@ python3 cli/aegis.py init-auth --url "https://colab.research.google.com/drive/YO
 4. **Interactive Form Configuration**:
    - **`HF_TOKEN`**: Enter your Hugging Face token if downloading gated or private repositories.
    - **`MODEL_REPO` & `MODEL_FILE`**:
-     - *Preset Models:* Select from tested defaults (`orcarouter/Qwen3.8-27B-Uncensored-GGUF`, `0xalpha/Security-Audit-7B-GGUF`, `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF`, `bartowski/Qwen2.5-Coder-14B/32B`).
+     - *Preset Models:* Select from tested defaults (`JonathanColetti/Qwen3.8-27B-Uncensored-GGUF`, `0xalpha/Security-Audit-7B-GGUF`, `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF`, `bartowski/Qwen2.5-Coder-14B/32B`).
      - *Custom Models (Free Input):* You can click directly into the dropdown fields and type **any** custom Hugging Face repository (`Organization/Model-Repo`) and `.gguf` filename (e.g. `TheBloke/Mistral-7B-Instruct-v0.2-GGUF` and `mistral-7b-instruct-v0.2.Q4_K_M.gguf`).
 5. Save the notebook and copy its URL into your `.env` as `AEGIS_COLAB_URL`.
 
