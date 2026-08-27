@@ -6,12 +6,14 @@
  * - Real-time tunnel health monitoring & hot URL updates
  * - Task-based security prompt interception & routing (0xalpha Security Model)
  * - Circuit breaker with automated Playwright recovery & quota cooldown
+ * - Standard OmniRoute Hook lifecycle (onRequest, onResponse, onError, onActivate, onDeactivate)
+ * - CLI subcommands for omniroute CLI integration
  */
 
-const http = require('http');
-const https = require('https');
-const { spawn } = require('child_process');
-const path = require('path');
+const http = typeof require !== 'undefined' ? require('http') : null;
+const https = typeof require !== 'undefined' ? require('https') : null;
+const { spawn } = typeof require !== 'undefined' ? require('child_process') : {};
+const path = typeof require !== 'undefined' ? require('path') : {};
 
 const PROVIDER_ID = 'colab-aegis';
 
@@ -23,8 +25,8 @@ class AegisRoutePlugin {
     // Configuration with sensible defaults
     this.config = {
       enabled: config.enabled !== false,
-      tunnelUrl: config.tunnelUrl || process.env.AEGIS_TUNNEL_URL || 'http://localhost:8000/v1',
-      colabNotebookUrl: config.colabNotebookUrl || process.env.AEGIS_COLAB_URL || '',
+      tunnelUrl: config.tunnelUrl || (typeof process !== 'undefined' && process.env ? process.env.AEGIS_TUNNEL_URL : '') || 'http://localhost:8000/v1',
+      colabNotebookUrl: config.colabNotebookUrl || (typeof process !== 'undefined' && process.env ? process.env.AEGIS_COLAB_URL : '') || '',
       healthCheckIntervalSeconds: config.healthCheckIntervalSeconds || 30,
       cooldownHours: config.cooldownHours || 4.0,
       fallbackChain: config.fallbackChain || ['local-mlx', 'anthropic', 'openai'],
@@ -46,8 +48,8 @@ class AegisRoutePlugin {
         'semgrep'
       ],
       alertChannels: config.alertChannels || {
-        discordWebhookUrl: process.env.AEGIS_DISCORD_WEBHOOK_URL || '',
-        n8nWebhookUrl: process.env.AEGIS_N8N_WEBHOOK_URL || '',
+        discordWebhookUrl: (typeof process !== 'undefined' && process.env ? process.env.AEGIS_DISCORD_WEBHOOK_URL : '') || '',
+        n8nWebhookUrl: (typeof process !== 'undefined' && process.env ? process.env.AEGIS_N8N_WEBHOOK_URL : '') || '',
         enableMacosNotification: true,
       },
     };
@@ -80,17 +82,17 @@ class AegisRoutePlugin {
   }
 
   /**
-   * OmniRoute Lifecycle Hook: onInit
+   * OmniRoute Lifecycle Hook: onInit / onActivate
    */
   async onInit(context = {}) {
     this.log(`Initializing AegisRoute Plugin v${this.version}...`);
     this.context = context;
 
-    // Register provider into OmniRoute registry
+    // Register provider into OmniRoute registry if available
     this.registerProvider(this.config.tunnelUrl);
 
     // Register Admin Webhook endpoints if router is available
-    if (context.registerAdminRoute) {
+    if (context && context.registerAdminRoute) {
       context.registerAdminRoute('POST', '/aegis/update-tunnel', (req, res) => this.handleUpdateTunnel(req, res));
       context.registerAdminRoute('GET', '/aegis/status', (req, res) => this.handleGetStatus(req, res));
       context.registerAdminRoute('POST', '/aegis/trigger-recover', (req, res) => this.handleTriggerRecover(req, res));
@@ -103,12 +105,13 @@ class AegisRoutePlugin {
   }
 
   /**
-   * OmniRoute Lifecycle Hook: onDestroy
+   * OmniRoute Lifecycle Hook: onDestroy / onDeactivate
    */
   async onDestroy() {
     this.log('Cleaning up AegisRoute Plugin resources...');
     if (this.healthIntervalId) {
       clearInterval(this.healthIntervalId);
+      this.healthIntervalId = null;
     }
   }
 
@@ -185,12 +188,26 @@ class AegisRoutePlugin {
   /**
    * HTTP ping /v1/models endpoint
    */
-  pingEndpoint(baseUrl) {
+  async pingEndpoint(baseUrl) {
+    if (typeof fetch === 'function') {
+      try {
+        const urlStr = `${baseUrl.replace(/\/+$/, '')}/models`;
+        const res = await fetch(urlStr, { method: 'GET', signal: AbortSignal.timeout(6000) });
+        return res.status >= 200 && res.status < 300;
+      } catch (e) {
+        return false;
+      }
+    }
+
     return new Promise((resolve) => {
       try {
         const urlStr = `${baseUrl.replace(/\/+$/, '')}/models`;
         const url = new URL(urlStr);
         const transport = url.protocol === 'https:' ? https : http;
+
+        if (!transport) {
+          return resolve(false);
+        }
 
         const req = transport.get(url, { timeout: 6000 }, (res) => {
           if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -218,7 +235,7 @@ class AegisRoutePlugin {
   async onRoute(requestContext) {
     this.state.metrics.totalRequests++;
 
-    const messages = requestContext.messages || [];
+    const messages = requestContext.messages || (requestContext.body && requestContext.body.messages) || [];
     let fullPromptText = '';
 
     for (const msg of messages) {
@@ -255,10 +272,65 @@ class AegisRoutePlugin {
   }
 
   /**
+   * Standard OmniRoute Middleware Hook: onRequest
+   */
+  async onRequest(ctx) {
+    if (!this.config.enabled || !ctx) return;
+    if (ctx.metadata && ctx.metadata.aegisProcessed) return;
+
+    if (ctx.metadata) {
+      ctx.metadata.aegisProcessed = true;
+    }
+
+    this.state.metrics.totalRequests++;
+
+    const body = ctx.body;
+    if (!body) return;
+
+    const messages = body.messages || [];
+    let fullPromptText = '';
+
+    for (const msg of messages) {
+      if (!msg) continue;
+      if (typeof msg.content === 'string') {
+        fullPromptText += ' ' + msg.content;
+      } else if (Array.isArray(msg.content)) {
+        fullPromptText += ' ' + msg.content.map(c => (c && c.text) || '').join(' ');
+      }
+    }
+
+    const isSecurityAudit = this.securityRegex.test(fullPromptText);
+    if (isSecurityAudit) {
+      this.state.metrics.securityRouted++;
+      this.log(`Security keyword detected in onRequest hook. Prioritizing Aegis.`);
+
+      if (ctx.metadata) {
+        ctx.metadata.aegisSecurityRouted = true;
+        ctx.metadata.aegisTargetProvider = PROVIDER_ID;
+      }
+    }
+  }
+
+  /**
+   * Standard OmniRoute Middleware Hook: onResponse
+   */
+  async onResponse(ctx, response) {
+    return response;
+  }
+
+  /**
+   * Standard OmniRoute Middleware Hook: onError
+   */
+  async onError(ctx, error) {
+    if (!this.config.enabled) return;
+    return this.onFallback(error, ctx);
+  }
+
+  /**
    * OmniRoute Lifecycle Hook: onFallback
    * Invoked when colab-aegis provider fails during request execution
    */
-  async onFallback(error, requestContext) {
+  async onFallback(error, requestContext = {}) {
     this.state.metrics.fallbacksTriggered++;
     this.state.metrics.lastError = error ? error.message : 'Unknown Failure';
     this.log(`Colab endpoint failure detected during inference: ${this.state.metrics.lastError}`, 'ERROR');
@@ -273,7 +345,7 @@ class AegisRoutePlugin {
   /**
    * Determine next available fallback route from fallbackChain
    */
-  getNextFallbackRoute(requestContext) {
+  getNextFallbackRoute(requestContext = {}) {
     for (const providerId of this.config.fallbackChain) {
       if (providerId !== PROVIDER_ID) {
         this.log(`Redirecting request to fallback provider: '${providerId}'`);
@@ -298,8 +370,15 @@ class AegisRoutePlugin {
     this.isRecovering = true;
     this.log('Launching Playwright Colab Controller to diagnose/recover runtime...');
 
-    const scriptPath = path.resolve(__dirname, '../core/playwright_controller.py');
-    const pythonExe = process.env.PYTHON_PATH || 'python3';
+    const baseDir = typeof __dirname !== 'undefined' ? __dirname : '.';
+    const scriptPath = path.resolve ? path.resolve(baseDir, '../core/playwright_controller.py') : 'core/playwright_controller.py';
+    const pythonExe = (typeof process !== 'undefined' && process.env && process.env.PYTHON_PATH) || 'python3';
+
+    if (!spawn) {
+      this.log('spawn child_process unavailable in this sandbox mode.', 'WARN');
+      this.isRecovering = false;
+      return;
+    }
 
     const args = [
       scriptPath,
@@ -310,38 +389,43 @@ class AegisRoutePlugin {
       args.push('--url', this.config.colabNotebookUrl);
     }
 
-    const proc = spawn(pythonExe, args, {
-      cwd: path.resolve(__dirname, '..'),
-      env: process.env,
-    });
+    try {
+      const proc = spawn(pythonExe, args, {
+        cwd: path.resolve ? path.resolve(baseDir, '..') : '.',
+        env: typeof process !== 'undefined' ? process.env : {},
+      });
 
-    let output = '';
-    proc.stdout.on('data', (d) => { output += d.toString(); });
-    proc.stderr.on('data', (d) => { output += d.toString(); });
+      let output = '';
+      if (proc.stdout) proc.stdout.on('data', (d) => { output += d.toString(); });
+      if (proc.stderr) proc.stderr.on('data', (d) => { output += d.toString(); });
 
-    proc.on('close', (code) => {
-      this.isRecovering = false;
-      this.log(`Playwright controller finished with exit code: ${code}`);
+      proc.on('close', (code) => {
+        this.isRecovering = false;
+        this.log(`Playwright controller finished with exit code: ${code}`);
 
-      if (code === 2) {
-        // Exit Code 2 = GPU Quota Limit Exceeded
-        const cooldownMs = this.config.cooldownHours * 3600 * 1000;
-        this.state.disabledUntil = Date.now() + cooldownMs;
-        this.state.status = 'COOLDOWN';
-        this.log(`GPU Quota limit reached. Setting ${this.config.cooldownHours}h cooldown.`, 'ERROR');
-        this.dispatchAlert('Colab GPU Quota Limit', `GPU units exhausted. Cooldown active for ${this.config.cooldownHours} hours.`);
-      } else if (code === 0) {
-        // Exit Code 0 = Successfully booted, check if new URL was emitted
-        const match = output.match(/AEGIS_TUNNEL_URL=(https:\/\/[^\s]+)/);
-        if (match && match[1]) {
-          this.updateTunnelUrl(match[1]);
+        if (code === 2) {
+          // Exit Code 2 = GPU Quota Limit Exceeded
+          const cooldownMs = this.config.cooldownHours * 3600 * 1000;
+          this.state.disabledUntil = Date.now() + cooldownMs;
+          this.state.status = 'COOLDOWN';
+          this.log(`GPU Quota limit reached. Setting ${this.config.cooldownHours}h cooldown.`, 'ERROR');
+          this.dispatchAlert('Colab GPU Quota Limit', `GPU units exhausted. Cooldown active for ${this.config.cooldownHours} hours.`);
+        } else if (code === 0) {
+          // Exit Code 0 = Successfully booted, check if new URL was emitted
+          const match = output.match(/AEGIS_TUNNEL_URL=(https:\/\/[^\s]+)/);
+          if (match && match[1]) {
+            this.updateTunnelUrl(match[1]);
+          }
+          this.state.status = 'HEALTHY';
+          this.state.disabledUntil = null;
+        } else {
+          this.state.status = 'DEGRADED';
         }
-        this.state.status = 'HEALTHY';
-        this.state.disabledUntil = null;
-      } else {
-        this.state.status = 'DEGRADED';
-      }
-    });
+      });
+    } catch (err) {
+      this.isRecovering = false;
+      this.log(`Failed to spawn Playwright recovery: ${err.message}`, 'ERROR');
+    }
   }
 
   /**
@@ -413,18 +497,78 @@ class AegisRoutePlugin {
    * Dispatch alerts across notification channels
    */
   dispatchAlert(title, message) {
-    // Run alerting.py dispatcher
-    const scriptPath = path.resolve(__dirname, '../core/alerting.py');
-    const pythonExe = process.env.PYTHON_PATH || 'python3';
-    spawn(pythonExe, [scriptPath], {
-      cwd: path.resolve(__dirname, '..'),
-      env: Object.assign({}, process.env, {
-        AEGIS_ALERT_TITLE: title,
-        AEGIS_ALERT_MSG: message,
-      }),
-      detached: true,
-    }).unref();
+    if (!spawn) return;
+    const baseDir = typeof __dirname !== 'undefined' ? __dirname : '.';
+    const scriptPath = path.resolve ? path.resolve(baseDir, '../core/alerting.py') : 'core/alerting.py';
+    const pythonExe = (typeof process !== 'undefined' && process.env && process.env.PYTHON_PATH) || 'python3';
+    try {
+      spawn(pythonExe, [scriptPath], {
+        cwd: path.resolve ? path.resolve(baseDir, '..') : '.',
+        env: Object.assign({}, typeof process !== 'undefined' ? process.env : {}, {
+          AEGIS_ALERT_TITLE: title,
+          AEGIS_ALERT_MSG: message,
+        }),
+        detached: true,
+      }).unref();
+    } catch (e) {}
   }
 }
 
-module.exports = AegisRoutePlugin;
+// Instantiate default singleton instance
+const defaultInstance = new AegisRoutePlugin();
+
+// Clean, non-circular exports conforming to OmniRoute Plugin API
+module.exports = {
+  meta: {
+    name: "aegis",
+    version: "1.0.0",
+    description: "AegisRoute Google Colab LLM inference bridge & DevSecOps smart router",
+    omnirouteApi: ">=1.0.0",
+  },
+  onRequest: async (ctx) => {
+    return defaultInstance.onRequest(ctx);
+  },
+  onResponse: async (ctx, res) => {
+    return defaultInstance.onResponse(ctx, res);
+  },
+  onError: async (ctx, err) => {
+    return defaultInstance.onError(ctx, err);
+  },
+  onActivate: async () => {
+    return defaultInstance.onInit();
+  },
+  onDeactivate: async () => {
+    return defaultInstance.onDestroy();
+  },
+  onInstall: async () => {
+    return defaultInstance.onInit();
+  },
+  register: (program, ctx) => {
+    const aegisCmd = program
+      .command("aegis")
+      .description("Manage AegisRoute Colab GPU inference bridge & security routing");
+
+    aegisCmd
+      .command("status")
+      .description("Show AegisRoute provider and tunnel status")
+      .action(async (opts, cmd) => {
+        console.log(JSON.stringify(defaultInstance.state, null, 2));
+      });
+
+    aegisCmd
+      .command("tunnel <url>")
+      .description("Update the active Cloudflare tunnel URL")
+      .action(async (url) => {
+        defaultInstance.updateTunnelUrl(url);
+        console.log(`✓ Updated Aegis tunnel URL to: ${url}`);
+      });
+
+    aegisCmd
+      .command("recover")
+      .description("Trigger Playwright Colab headless reboot & recovery")
+      .action(async () => {
+        defaultInstance.triggerAutoRecovery();
+        console.log("✓ Dispatched Colab auto-recovery");
+      });
+  }
+};

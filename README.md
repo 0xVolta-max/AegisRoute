@@ -92,10 +92,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 
-# Set up OmniRoute Plugin
-cd plugin
-npm install
-cd ..
+# Install AegisRoute Plugin into OmniRoute (Auto-detects Docker & Local setups)
+python3 cli/aegis.py install-plugin
 
 # Configure environment variables
 cp config/aegis.env.example .env
@@ -134,22 +132,16 @@ python3 cli/aegis.py status
 
 AegisRoute provides a native provider & router plugin for [OmniRoute](https://github.com/0xVolta-max/omniroute).
 
-Add the plugin to your OmniRoute configuration:
-
-```json
-{
-  "plugins": {
-    "omniroute-plugin-aegis": {
-      "enabled": true,
-      "path": "./plugin",
-      "tunnelUrl": "http://localhost:8000/v1",
-      "cooldownHours": 4.0,
-      "fallbackChain": ["local-mlx", "anthropic", "openai"],
-      "securityKeywords": ["audit", "vulnerability", "reentrancy", "exploit", "cve", "smart contract"]
-    }
-  }
-}
+### 1-Click Plugin Installation
+Run the automated installer to link and activate the plugin across Docker and local OmniRoute instances:
+```bash
+python3 cli/aegis.py install-plugin
 ```
+*Options:*
+- `--docker-container <name>`: Specify custom Docker container name (default: `omniroute`).
+- `--omniroute-url <url>`: Target specific OmniRoute server URL (default: `http://localhost:20128`).
+- `--local-only`: Only install to local `~/.omniroute/plugins`.
+- `--docker-only`: Only install into running Docker container.
 
 ### Dynamic Hot-Update Endpoint
 When Colab reboots, the Playwright controller or your webhook can notify OmniRoute immediately without restarting the proxy:

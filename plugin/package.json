@@ -4,7 +4,8 @@
   "description": "Autonomous Google Colab LLM inference bridge & DevSecOps smart router plugin for OmniRoute",
   "main": "index.js",
   "scripts": {
-    "test": "node test.js"
+    "test": "node test.js",
+    "install-plugin": "python3 ../cli/aegis.py install-plugin"
   },
   "keywords": [
     "omniroute",

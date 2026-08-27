@@ -20,7 +20,6 @@ import json
 import logging
 import os
 import re
-import sys
 from enum import IntEnum
 from pathlib import Path
 from typing import Optional, Tuple
@@ -29,6 +28,24 @@ try:
     from playwright.async_api import BrowserContext, Page, async_playwright
 except ImportError:
     async_playwright = None  # type: ignore
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(REPO_ROOT / ".env")
+except ImportError:
+    env_file = REPO_ROOT / ".env"
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
 
 from .alerting import AlertDispatcher, AlertLevel
 
@@ -177,11 +194,24 @@ class ColabPlaywrightController:
 
             try:
                 logger.info("Navigating to Colab Notebook...")
-                await page.goto(self.notebook_url, wait_until="networkidle", timeout=60_000)
+                await page.goto(self.notebook_url, wait_until="domcontentloaded", timeout=60_000)
             except Exception as exc:
-                logger.warning("Initial page load timed out or had warnings: %s. Continuing...", exc)
+                logger.warning("Initial page load had warnings: %s. Continuing...", exc)
 
-            await page.wait_for_timeout(3_000)
+            # Wait for Colab interactive UI to initialize
+            try:
+                await page.wait_for_selector(".cell, colab-run-button, #runtime-menu-button, #connect, colab-connect-button", timeout=25_000)
+                await page.wait_for_timeout(2_000)
+            except Exception:
+                logger.warning("Colab UI selector wait timed out. Attempting fallback execution...")
+
+            # Save initial debug screenshot
+            screenshot_path = REPO_ROOT / "colab_user_data" / "colab_live_view.png"
+            try:
+                screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                await page.screenshot(path=str(screenshot_path))
+            except Exception:
+                pass
 
             # Check if login is required
             if "accounts.google.com" in page.url or await page.locator("text='Sign in'").count() > 0:
@@ -194,26 +224,93 @@ class ColabPlaywrightController:
                 await context.close()
                 return ColabStatus.ERROR, None
 
-            logger.info("Sending 'Run All' shortcut (Control+F9 / Meta+F9)...")
-            # Connect runtime if needed or trigger Run All
-            await page.keyboard.press("Control+F9")
-            await page.wait_for_timeout(1_000)
-            await page.keyboard.press("Meta+F9")
+            # Helper to dismiss Colab warning dialogs
+            async def dismiss_colab_dialogs():
+                dismiss_selectors = [
+                    'button:has-text("Run anyway")',
+                    'button:has-text("Trotzdem ausführen")',
+                    'mwc-button#ok',
+                    'paper-button#ok',
+                    '#ok',
+                    'mwc-button:has-text("Run anyway")',
+                    'mwc-button:has-text("Trotzdem ausführen")',
+                    'button:has-text("Connect")',
+                    'button:has-text("Verbinden")',
+                ]
+                for d_sel in dismiss_selectors:
+                    try:
+                        loc = page.locator(d_sel)
+                        if await loc.count() > 0 and await loc.first.is_visible():
+                            logger.info(f"Clicking dialog button: '{d_sel}'...")
+                            await loc.first.click()
+                            await page.wait_for_timeout(500)
+                    except Exception:
+                        pass
 
-            # Also click 'Run anyway' dialog if warning pops up for external code
+            await dismiss_colab_dialogs()
+
+            # Connect runtime if 'Connect' button is visible
             try:
-                run_anyway_btn = page.locator('text="Run anyway"').or_(page.locator('text="Trotzdem ausführen"'))
-                if await run_anyway_btn.count() > 0 and await run_anyway_btn.first.is_visible():
-                    logger.info("Clicking 'Run anyway' warning dialog...")
-                    await run_anyway_btn.first.click()
+                connect_btn = page.locator("#connect").or_(page.locator("colab-connect-button")).or_(page.locator('text="Connect"')).or_(page.locator('text="Verbinden"'))
+                if await connect_btn.count() > 0 and await connect_btn.first.is_visible():
+                    logger.info("Clicking Colab 'Connect' button...")
+                    await connect_btn.first.click()
+                    await page.wait_for_timeout(2_000)
             except Exception:
                 pass
+
+            # Multi-Strategy Cell Execution
+            logger.info("Triggering Colab cell execution...")
+
+            # Strategy 1: Direct Play Button Click on first code cell
+            try:
+                run_btn = page.locator("colab-run-button").or_(page.locator(".cell-execution-container")).or_(page.locator('div[role="button"][aria-label*="Execute"]')).or_(page.locator('div[role="button"][aria-label*="ausführen"]')).or_(page.locator('div[role="button"][title*="Run"]'))
+                if await run_btn.count() > 0 and await run_btn.first.is_visible():
+                    logger.info("Clicking cell run button directly...")
+                    await run_btn.first.click()
+                    await page.wait_for_timeout(1_000)
+            except Exception as e:
+                logger.debug(f"Direct run button click bypassed: {e}")
+
+            # Strategy 2: Keyboard shortcuts
+            await page.keyboard.press("Control+F9")
+            await page.wait_for_timeout(500)
+            await page.keyboard.press("Meta+F9")
+            await page.wait_for_timeout(1_000)
+
+            # Strategy 3: Menu 'Runtime' -> 'Run all'
+            try:
+                runtime_menu = page.locator("#runtime-menu-button").or_(page.locator('div[aria-haspopup="true"]:has-text("Runtime")')).or_(page.locator('div[aria-haspopup="true"]:has-text("Laufzeit")'))
+                if await runtime_menu.count() > 0 and await runtime_menu.first.is_visible():
+                    await runtime_menu.first.click()
+                    await page.wait_for_timeout(500)
+                    run_all_item = page.locator("#run-all").or_(page.locator('div[role="menuitem"]:has-text("Run all")')).or_(page.locator('div[role="menuitem"]:has-text("Alle ausführen")'))
+                    if await run_all_item.count() > 0 and await run_all_item.first.is_visible():
+                        logger.info("Clicking Runtime -> Run All menu item...")
+                        await run_all_item.first.click()
+            except Exception as e:
+                logger.debug(f"Menu run-all bypassed: {e}")
+
+            await dismiss_colab_dialogs()
 
             # Monitor loop for Quota Dialogs and Tunnel URL
             start_time = asyncio.get_event_loop().time()
             logger.info("Watching notebook output and dialogs for up to %d seconds...", self.timeout_seconds)
+            last_screenshot_time = 0
 
             while (asyncio.get_event_loop().time() - start_time) < self.timeout_seconds:
+                # Continuously dismiss security / runtime warning dialogs
+                await dismiss_colab_dialogs()
+
+                # Periodically update debug screenshot
+                current_time = asyncio.get_event_loop().time()
+                if (current_time - last_screenshot_time) > 15:
+                    last_screenshot_time = current_time
+                    try:
+                        await page.screenshot(path=str(screenshot_path))
+                    except Exception:
+                        pass
+
                 # 1. Check for modal dialogs (mwc-dialog, paper-dialog, role=dialog)
                 quota_detected, dialog_text = await self._check_for_quota_dialog(page)
                 if quota_detected:
@@ -227,11 +324,17 @@ class ColabPlaywrightController:
                     await context.close()
                     return ColabStatus.QUOTA_EXCEEDED, None
 
-                # 2. Check for Output Text / Tunnel URL in DOM output cells
+                # 2. Check for Output Text / Tunnel URL in DOM output cells and Frames
                 tunnel_url = await self._scan_for_tunnel_url(page)
                 if tunnel_url:
                     self.discovered_tunnel_url = tunnel_url
                     logger.info("🎉 [AEGIS_READY] Inference endpoint online: %s", tunnel_url)
+
+                    # Update debug screenshot with online state
+                    try:
+                        await page.screenshot(path=str(screenshot_path))
+                    except Exception:
+                        pass
 
                     # Notify OmniRoute hot-update endpoint if configured
                     if self.tunnel_callback_url:
@@ -246,7 +349,7 @@ class ColabPlaywrightController:
                     await context.close()
                     return ColabStatus.SUCCESS, tunnel_url
 
-                await asyncio.sleep(4)
+                await asyncio.sleep(3)
 
             logger.error("Timeout reached without receiving [AEGIS_READY] marker.")
             self.alert_dispatcher.dispatch_alert(
@@ -283,10 +386,30 @@ class ColabPlaywrightController:
         return False, ""
 
     async def _scan_for_tunnel_url(self, page: Page) -> Optional[str]:
-        """Scan active output cells / iframe logs for Aegis ready marker."""
+        """Scan active output cells, shadow DOM, anchor links, and iframe logs for Aegis ready marker."""
         try:
-            # Check entire page body innerText for speed & coverage
-            body_text = await page.evaluate("() => document.body ? document.body.innerText : ''")
+            # Comprehensive extractor querying body, pre tags, output containers, shadow roots, and anchor tags
+            body_text = await page.evaluate("""() => {
+                let texts = [];
+                if (document.body) {
+                    texts.push(document.body.innerText || '');
+                }
+                // Check all links
+                const links = document.querySelectorAll('a[href*="trycloudflare.com"]');
+                for (const a of links) {
+                    texts.push(a.href);
+                    texts.push(a.innerText || '');
+                }
+                // Check all output elements
+                const outputs = document.querySelectorAll('colab-output-container, div.output_text, div.output, pre, .stream, code');
+                for (const el of outputs) {
+                    texts.push(el.innerText || el.textContent || '');
+                    if (el.shadowRoot) {
+                        texts.push(el.shadowRoot.innerText || el.shadowRoot.textContent || '');
+                    }
+                }
+                return texts.join('\\n');
+            }""")
             candidate_url = None
 
             match = AEGIS_READY_REGEX.search(body_text)
@@ -298,6 +421,28 @@ class ColabPlaywrightController:
                 if cf_match:
                     url = cf_match.group(0).rstrip("/")
                     candidate_url = f"{url}/v1"
+
+            # 2. Check all iframes if not found in main page
+            if not candidate_url:
+                for frame in page.frames:
+                    try:
+                        frame_text = await frame.evaluate("""() => {
+                            let fTexts = [];
+                            if (document.body) fTexts.push(document.body.innerText || '');
+                            const fLinks = document.querySelectorAll('a[href*="trycloudflare.com"]');
+                            for (const a of fLinks) fTexts.push(a.href);
+                            return fTexts.join('\\n');
+                        }""")
+                        f_match = AEGIS_READY_REGEX.search(frame_text)
+                        if f_match:
+                            candidate_url = f_match.group(1).rstrip("/")
+                            break
+                        cf_f_match = CLOUDFLARE_URL_REGEX.search(frame_text)
+                        if cf_f_match:
+                            candidate_url = f"{cf_f_match.group(0).rstrip('/')}/v1"
+                            break
+                    except Exception:
+                        continue
 
             if candidate_url:
                 # Validate that the endpoint is actually accepting HTTP traffic

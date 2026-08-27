@@ -1,0 +1,55 @@
+{
+  "name": "omniroute-plugin-aegis",
+  "version": "1.0.0",
+  "description": "Autonomous Google Colab LLM inference bridge & DevSecOps smart router plugin for OmniRoute",
+  "author": "AegisRoute Team",
+  "license": "MIT",
+  "main": "index.js",
+  "source": "local",
+  "tags": [
+    "colab",
+    "devsecops",
+    "router",
+    "security"
+  ],
+  "requires": {
+    "omniroute": ">=1.0.0",
+    "permissions": [
+      "network",
+      "env",
+      "exec",
+      "file-read",
+      "file-write"
+    ]
+  },
+  "hooks": {
+    "onRequest": true,
+    "onResponse": true,
+    "onError": true,
+    "onInstall": true,
+    "onActivate": true,
+    "onDeactivate": true
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable or disable the AegisRoute Colab Bridge plugin"
+    },
+    "tunnelUrl": {
+      "type": "string",
+      "default": "http://localhost:8000/v1",
+      "description": "Active Cloudflare or local tunnel base URL (ending in /v1)"
+    },
+    "cooldownHours": {
+      "type": "number",
+      "default": 4.0,
+      "description": "Circuit breaker cooldown in hours when Colab GPU quota is exhausted"
+    },
+    "healthCheckIntervalSeconds": {
+      "type": "number",
+      "default": 30,
+      "description": "Interval for active health checks against /v1/models"
+    }
+  }
+}

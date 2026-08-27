@@ -223,11 +223,14 @@ def build_server_command(
     gpu_layers: int,
     ctx_window: int,
     chat_format: str,
+    model_alias: Optional[str] = None,
 ) -> List[str]:
     """Construct command line arguments for llama_cpp.server safely."""
+    clean_alias = model_alias or os.path.basename(model_path).replace(".gguf", "")
     cmd = [
         sys.executable, "-u", "-m", "llama_cpp.server",
         "--model", model_path,
+        "--model_alias", clean_alias,
         "--n_gpu_layers", str(gpu_layers),
         "--n_ctx", str(ctx_window),
         "--host", "0.0.0.0",
@@ -253,10 +256,11 @@ def start_llama_server(
     port: int = 8000,
     ctx_window: int = 8192,
     chat_format: str = "chatml",
+    model_alias: Optional[str] = None,
 ) -> subprocess.Popen:
     SERVER_LOGS.clear()
-    cmd = build_server_command(model_path, port, gpu_layers, ctx_window, chat_format)
-    log(f"Starting llama_cpp.server on port {port} (layers={gpu_layers}, ctx={ctx_window}, format={chat_format})...")
+    cmd = build_server_command(model_path, port, gpu_layers, ctx_window, chat_format, model_alias=model_alias)
+    log(f"Starting llama_cpp.server for model '{os.path.basename(model_path)}' (layers={gpu_layers}, ctx={ctx_window}, format={chat_format})...")
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
